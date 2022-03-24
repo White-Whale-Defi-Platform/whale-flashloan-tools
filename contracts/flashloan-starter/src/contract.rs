@@ -1,11 +1,17 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{to_binary, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult, Uint128, WasmMsg};
 use cw2::{get_contract_version, set_contract_version};
 
 use crate::error::ContractError;
-use crate::msg::{GmCountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{State, STATE};
+use crate::msg::{GmCountResponse, CallbackMsg, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::{State, ADMIN, BASE_ASSET, STATE};
+
+use terraswap::asset::{Asset, AssetInfo};
+
+use white_whale::deposit_info::ArbBaseAsset;
+use white_whale::ust_vault::msg::ExecuteMsg as VaultMsg;
+use white_whale::ust_vault::msg::FlashLoanPayload;
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:flashloan-starter";
@@ -17,7 +23,7 @@ pub fn instantiate(
     _env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
-) -> Result<Response, ContractError> {
+) -> Result<Response<Empty>, ContractError> {
     // Use CW2 to set the contract version, this is needed for migrations
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     let state = State {
@@ -37,21 +43,29 @@ pub fn instantiate(
 
     Ok(Response::new()
         .add_attribute("method", "instantiate")
-        .add_attribute("base_asset", msg.asset_info)
+        .add_attribute("base_asset", msg.asset_info.to_string())
         .add_attribute("vault_address", msg.vault_address))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
-    _info: MessageInfo,
+    env: Env,
+    info: MessageInfo,
     msg: ExecuteMsg,
-) -> Result<Response, ContractError> {
+) -> Result<Response<Empty>, ContractError> {
     match msg {
         ExecuteMsg::GoodMorning {} => try_good_morning(deps),
+        ExecuteMsg::ExecuteCallback { msgs } => handle_callback(env, msgs),
+        ExecuteMsg::FlashLoan { amount, msgs } => call_flashloan(deps, env, info, amount, msgs),
+        
     }
 }
+
+//----------------------------------------------------------------------------------------
+//  EXECUTE FUNCTION HANDLERS
+//----------------------------------------------------------------------------------------
+
 
 /// attempt to say good_morning. A simple example of how you can handle an ExecuteMsg with no input.
 pub fn try_good_morning(deps: DepsMut) -> Result<Response, ContractError> {
@@ -62,6 +76,45 @@ pub fn try_good_morning(deps: DepsMut) -> Result<Response, ContractError> {
     })?;
 
     Ok(Response::new().add_attribute("method", "try_good_morning"))
+}
+
+fn handle_callback(env: Env, msgs: Vec<CosmosMsg<Empty>>) -> Result<Response<Empty>, ContractError> {
+    let callback =
+        CallbackMsg::AfterSuccessfulExecuteCallback {}.to_cosmos_msg(&env.contract.address)?;
+    Ok(Response::new().add_messages(msgs).add_message(callback))
+}
+
+
+/// Attempt to call a FlashLoan of a specified amount providing the subsequent messages which will have access to this liquidity within the block
+fn call_flashloan(
+    deps: DepsMut,
+    _env: Env,
+    _msg_info: MessageInfo,
+    amount: Uint128,
+    msgs: Vec<CosmosMsg<Empty>>,
+) -> Result<Response<Empty>, ContractError> {
+    let state = STATE.load(deps.storage)?;
+    let deposit_info = BASE_ASSET.load(deps.storage)?;
+
+    // Construct callback msg
+    let callback_msg = ExecuteMsg::ExecuteCallback { msgs };
+    // Construct payload
+    let payload = FlashLoanPayload {
+        requested_asset: Asset {
+            info: deposit_info.asset_info,
+            amount,
+        },
+        callback: to_binary(&callback_msg)?,
+    };
+
+    // Call stablecoin Vault
+    Ok(
+        Response::new().add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: state.vault_address.to_string(),
+            msg: to_binary(&VaultMsg::FlashLoan { payload })?,
+            funds: vec![],
+        })),
+    )
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
