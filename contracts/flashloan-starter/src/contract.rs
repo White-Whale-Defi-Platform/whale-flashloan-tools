@@ -58,7 +58,15 @@ pub fn execute(
         ExecuteMsg::GoodMorning {} => try_good_morning(deps),
         ExecuteMsg::ExecuteCallback { msgs } => handle_callback(env, msgs),
         ExecuteMsg::FlashLoan { amount, msgs } => call_flashloan(deps, env, info, amount, msgs),
-        
+        ExecuteMsg::SetAdmin { admin } => {
+            let admin_addr = deps.api.addr_validate(&admin)?;
+            let previous_admin = ADMIN.get(deps.as_ref())?.unwrap();
+            ADMIN.execute_update_admin(deps, info, Some(admin_addr))?;
+            Ok(Response::default()
+                .add_attribute("previous admin", previous_admin)
+                .add_attribute("admin", admin))
+        }
+        ExecuteMsg::SetVault { vault } => set_vault_addr(deps, info, vault),
     }
 }
 
@@ -115,6 +123,22 @@ fn call_flashloan(
             funds: vec![],
         })),
     )
+}
+
+pub fn set_vault_addr(deps: DepsMut, msg_info: MessageInfo, vault_address: String) -> VaultResult {
+    // Only the admin should be able to call this
+    ADMIN.assert_admin(deps.as_ref(), &msg_info.sender)?;
+
+    let mut state = STATE.load(deps.storage)?;
+    // Get the old vault
+    let previous_vault = state.vault_address.to_string();
+    // Store the new vault addr
+    state.vault_address = deps.api.addr_validate(&vault_address)?;
+    STATE.save(deps.storage, &state)?;
+    // Respond and note the previous vault address
+    Ok(Response::new()
+        .add_attribute("new vault", vault_address)
+        .add_attribute("previous vault", previous_vault))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

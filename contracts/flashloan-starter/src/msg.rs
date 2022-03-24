@@ -27,6 +27,14 @@ pub enum ExecuteMsg {
     ExecuteCallback {
         msgs: Vec<CosmosMsg<Empty>>,
     },
+    // Update Admin
+    SetAdmin {
+        admin: String,
+    },
+    // Update target vault for Flashloan liquidity
+    SetVault {
+        vault: String,
+    },
     Callback(CallbackMsg),
 }
 
