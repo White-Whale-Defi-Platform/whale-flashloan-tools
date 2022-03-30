@@ -1,13 +1,14 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult, Uint128, WasmMsg};
+use cosmwasm_std::{Addr, to_binary, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult, Uint128, WasmMsg};
 use cw2::{get_contract_version, set_contract_version};
 
 use crate::error::ContractError;
-use crate::msg::{GmCountResponse, CallbackMsg, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{CallbackMsg, ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{State, ADMIN, BASE_ASSET, STATE};
 
 use terraswap::asset::{Asset, AssetInfo};
+use terraswap::querier::query_balance;
 
 use white_whale::deposit_info::ArbBaseAsset;
 use white_whale::ust_vault::msg::ExecuteMsg as VaultMsg;
@@ -35,7 +36,7 @@ pub fn instantiate(
     BASE_ASSET.save(
         deps.storage,
         &ArbBaseAsset {
-            asset_info: msg.asset_info,
+            asset_info: msg.asset_info.clone(),
         },
     )?;
     // Setup the admin as the creator of the contract
@@ -55,7 +56,7 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<Empty>, ContractError> {
     match msg {
-        ExecuteMsg::GoodMorning {} => try_good_morning(deps),
+        ExecuteMsg::Callback(msg) => _handle_callback(deps, env, info, msg),
         ExecuteMsg::ExecuteCallback { msgs } => handle_callback(env, msgs),
         ExecuteMsg::FlashLoan { amount, msgs } => call_flashloan(deps, env, info, amount, msgs),
         ExecuteMsg::SetAdmin { admin } => {
@@ -70,20 +71,47 @@ pub fn execute(
     }
 }
 
+
 //----------------------------------------------------------------------------------------
 //  EXECUTE FUNCTION HANDLERS
 //----------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------
+//  PRIVATE FUNCTIONS
+//----------------------------------------------------------------------------------------
 
+fn _handle_callback(deps: DepsMut, env: Env, info: MessageInfo, msg: CallbackMsg) -> Result<Response<Empty>, ContractError> {
+    // Callback functions can only be called this contract itself
+    if info.sender != env.contract.address {
+        return Err(ContractError::NotValidCallback {});
+    }
+    match msg {
+        CallbackMsg::AfterSuccessfulExecuteCallback {} => after_successful_exec_callback(deps, env),
+        // Possibility to add more callbacks in future.
+    }
+}
+//----------------------------------------------------------------------------------------
+//  CALLBACK FUNCTION HANDLERS
+//----------------------------------------------------------------------------------------
 
-/// attempt to say good_morning. A simple example of how you can handle an ExecuteMsg with no input.
-pub fn try_good_morning(deps: DepsMut) -> Result<Response, ContractError> {
-    // Rework the count example from cw-template to be a count of how many times GoodMorning has been called
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        state.count += 1;
-        Ok(state)
-    })?;
+// After the arb this function returns the funds to the vault.
+fn after_successful_exec_callback(deps: DepsMut, env: Env) -> Result<Response<Empty>, ContractError> {
+    let state = STATE.load(deps.storage)?;
+    let stable_denom = BASE_ASSET.load(deps.storage)?.get_denom()?;
+    let stables_in_contract =
+        query_balance(&deps.querier, env.contract.address, stable_denom.clone())?;
 
-    Ok(Response::new().add_attribute("method", "try_good_morning"))
+    // Send asset back to vault
+    let repay_asset = Asset {
+        info: AssetInfo::NativeToken {
+            denom: stable_denom,
+        },
+        amount: stables_in_contract,
+    };
+
+    Ok(Response::new().add_message(CosmosMsg::Bank(BankMsg::Send {
+        to_address: state.vault_address.to_string(),
+        amount: vec![repay_asset.deduct_tax(&deps.querier)?],
+    })))
 }
 
 fn handle_callback(env: Env, msgs: Vec<CosmosMsg<Empty>>) -> Result<Response<Empty>, ContractError> {
@@ -125,7 +153,7 @@ fn call_flashloan(
     )
 }
 
-pub fn set_vault_addr(deps: DepsMut, msg_info: MessageInfo, vault_address: String) -> VaultResult {
+pub fn set_vault_addr(deps: DepsMut, msg_info: MessageInfo, vault_address: String) -> Result<Response<Empty>, ContractError> {
     // Only the admin should be able to call this
     ADMIN.assert_admin(deps.as_ref(), &msg_info.sender)?;
 
@@ -144,14 +172,21 @@ pub fn set_vault_addr(deps: DepsMut, msg_info: MessageInfo, vault_address: Strin
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
+        QueryMsg::GetAssetInfo {} => to_binary(&try_query_asset_info(deps)?),
+        QueryMsg::GetVault {} => to_binary(&try_query_vault(deps)?),
     }
 }
 
 /// query how many times good morning has been called.
-fn query_count(deps: Deps) -> StdResult<GmCountResponse> {
-    let state = STATE.load(deps.storage)?;
-    Ok(GmCountResponse { count: state.count })
+pub fn try_query_asset_info(deps: Deps) -> StdResult<ArbBaseAsset> {
+    let info: ArbBaseAsset = BASE_ASSET.load(deps.storage)?;
+    Ok(info)
+}
+
+/// query how many times good morning has been called.
+pub fn try_query_vault(deps: Deps) -> StdResult<Addr> {
+    let info: State = STATE.load(deps.storage)?;
+    Ok(info.vault_address)
 }
 
 #[cfg(test)]

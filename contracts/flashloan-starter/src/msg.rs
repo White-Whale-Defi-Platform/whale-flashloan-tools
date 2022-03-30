@@ -17,8 +17,6 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
-    // Example ExecuteMsg with no Inputs
-    GoodMorning {},
     // Attempt to call a FlashLoan of a specified amount providing the subsequent messages which will have access to this liquidity within the block
     FlashLoan {
         amount: Uint128,
@@ -63,11 +61,7 @@ pub enum CallbackMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     // GetCount returns the current count as a json-encoded number
-    GetCount {},
+    GetAssetInfo {},
+    GetVault {},
 }
 
-// We define a custom struct for each query response
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct GmCountResponse {
-    pub count: i32,
-}
