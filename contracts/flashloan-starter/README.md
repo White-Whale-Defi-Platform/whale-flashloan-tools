@@ -1,5 +1,11 @@
-# CosmWasm Minimal Starter Pack
+# White Whale Flash Loan Starter contract -- Based on the CosmWasm Minimal Starter Pack
 
+This contract package contains almost the absolute minimum you need to be able to take out a flash loan from the White Whale Vault by interfacing with the Vault with this custom contract. This approach allows you to add your own CW logic for what should happen before and after a loan or helpful logic for composition of messages. 
+
+Additionally to make this fully ready to go, a script should be created which handles all the business logic of finding opportunities 
+and then calls this contract to request a loan.
+
+## Original text
 
 This template contains almost the absolute minimum you need to get going with a CosmWasm smart contract in Rust. There is a specific focus put on it to be very barebones and this template is based on the [cw-template](https://raw.githubusercontent.com/CosmWasm/cw-template) by CosmWasm.
 
