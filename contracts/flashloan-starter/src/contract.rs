@@ -2,9 +2,10 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{Addr, to_binary, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult, Uint128, WasmMsg};
 use cw2::{get_contract_version, set_contract_version};
+use semver::Version;
 
 use crate::error::ContractError;
-use crate::msg::{CallbackMsg, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{CallbackMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::state::{State, ADMIN, BASE_ASSET, STATE};
 
 use terraswap::asset::{Asset, AssetInfo};
@@ -71,6 +72,23 @@ pub fn execute(
     }
 }
 
+//----------------------------------------------------------------------------------------
+//  CONTRACT UPGRADEABILITY
+//----------------------------------------------------------------------------------------
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response<Empty>, ContractError> {
+    let version: Version = CONTRACT_VERSION.parse()?;
+    let storage_version: Version = get_contract_version(deps.storage)?.version.parse()?;
+
+    if storage_version < version {
+        set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+        // If state structure changed in any contract version in the way migration is needed, it
+        // should occur here
+    }
+    Ok(Response::default())
+}
 
 //----------------------------------------------------------------------------------------
 //  EXECUTE FUNCTION HANDLERS
